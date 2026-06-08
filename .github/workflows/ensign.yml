@@ -1,0 +1,41 @@
+# Repo Ensign — Per-Repository Workflow
+#
+# Triggered by issue_comment starting with /ensign.
+# Calls the composite action to parse the command and post a response.
+#
+# IMPORTANT: Set ENSIGN_NAME as a repository variable for your ensign's name
+#            (or pass it inline via the workflow_dispatch input).
+
+name: Repo Ensign
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      repo-name:
+        description: 'Repository name override'
+        required: false
+      ensign-name:
+        description: 'Ensign name override'
+        required: false
+
+jobs:
+  ensign:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.comment.body, '/ensign') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 'Ensign responds'
+        uses: ./.github/actions/ensign
+        with:
+          repo-name:  ${{
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.repo-name)
+            || github.event.repository.name
+          }}
+          ensign-name: ${{
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.ensign-name)
+            || vars.ENSIGN_NAME || 'Ensign'
+          }}

@@ -1,0 +1,226 @@
+name: 'Repo Ensign'
+description: >-
+  Summon the repo ensign — an in-repo agent identity that answers questions,
+  checks status, reads the journal, and connects you to sibling fleet repos.
+inputs:
+  repo-name:
+    description: 'Human-readable name of this repository (e.g. tminus-dispatcher)'
+    required: true
+  ensign-name:
+    description: 'Name of the ensign agent that lives in this repo (e.g. Chronia)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 'Summon the ensign'
+      uses: actions/github-script@v7
+      id: ensign-respond
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const repoName   = '${{ inputs.repo-name }}';
+          const ensignName = '${{ inputs.ensign-name }}';
+          const octokit    = github.getOctokit(process.env.GITHUB_TOKEN);
+          const { owner, repo } = context.repo;
+
+          // ── Helpers ──────────────────────────────────────────────────────
+
+          /** Read a file from the repo root via the GitHub API (raw text). */
+          async function readRepoFile(path) {
+            try {
+              const { data } = await octokit.rest.repos.getContent({
+                owner, repo, path,
+                headers: { Accept: 'application/vnd.github.v3.raw' },
+              });
+              return typeof data === 'string' ? data : Buffer.from(data.content, 'base64').toString('utf-8');
+            } catch {
+              return null;
+            }
+          }
+
+          /** Post a comment on the issue / PR that triggered this run. */
+          async function postComment(body) {
+            if (!context.issue.number) {
+              console.log('No issue/PR context — printing instead:\n' + body);
+              return;
+            }
+            await octokit.rest.issues.createComment({
+              owner, repo,
+              issue_number: context.issue.number,
+              body,
+            });
+          }
+
+          /** Build the first line of every response — the ensign greeting. */
+          function greeting() {
+            return `## 🤖 **${ensignName}** — Ensign of *${repoName}*\n\n`;
+          }
+
+          // ── Parse command ────────────────────────────────────────────────
+
+          const body     = (context.payload.comment && context.payload.comment.body) || '';
+          const trimmed  = body.trim();
+
+          // Only respond to /ensign lines
+          if (!trimmed.match(/^\/ensign\b/i)) {
+            console.log('Comment does not start with /ensign — ignoring.');
+            return;
+          }
+
+          // Strip leading code-fence artifacts just in case
+          const clean = trimmed.replace(/^```\w*\s*/i, '').replace(/\s*```$/i, '');
+          const parts = clean.split(/\s+/);           // ["/ensign", "status"]
+          const cmd   = (parts[1] || '').toLowerCase();
+          const arg   = parts.slice(2).join(' ').trim();
+
+          // ── Load contextual files ────────────────────────────────────────
+
+          const agentMd  = await readRepoFile('AGENT.md');
+          const journalMd = await readRepoFile('memory/JOURNAL.md');
+
+          // ── Command handlers ────────────────────────────────────────────
+
+          async function cmdStatus() {
+            let lines = greeting();
+
+            // Latest commit
+            let lastCommit;
+            try {
+              const { data } = await octokit.rest.repos.getCommit({ owner, repo, ref: 'HEAD' });
+              lastCommit = data;
+            } catch { /* ignore */ }
+
+            if (lastCommit) {
+              const sha   = lastCommit.sha.slice(0, 7);
+              const msg   = (lastCommit.commit.message || '').split('\n')[0];
+              const date  = lastCommit.commit.committer.date;
+              const author = lastCommit.commit.author.name;
+              lines += `**Latest commit:** [\`${sha}\`](${lastCommit.html_url}) — *${msg}* — ${author} (${new Date(date).toISOString().split('T')[0]})\n\n`;
+            }
+
+            // Open issues
+            const { data: issues } = await octokit.rest.issues.listForRepo({
+              owner, repo, state: 'open', per_page: 5,
+            });
+            if (issues.length) {
+              lines += `**Open issues (${issues.length} shown):**\n`;
+              for (const i of issues) {
+                lines += `- [#${i.number}](${i.html_url}) ${i.title}\n`;
+              }
+              lines += '\n';
+            } else {
+              lines += '**No open issues.** ✨\n\n';
+            }
+
+            // Recent CI — last 3 workflow runs
+            const { data: runs } = await octokit.rest.actions.listWorkflowRunsForRepo({
+              owner, repo, per_page: 3,
+            });
+            if (runs.workflow_runs && runs.workflow_runs.length) {
+              lines += `**Recent CI runs:**\n`;
+              for (const r of runs.workflow_runs) {
+                const emoji = r.conclusion === 'success' ? '✅' : r.conclusion === 'failure' ? '❌' : '⏳';
+                lines += `- ${emoji} [${r.name}](${r.html_url}) → ${r.conclusion || 'in-progress'}\n`;
+              }
+            }
+
+            return lines;
+          }
+
+          async function cmdHelp() {
+            let lines = greeting();
+            lines += `I am **${ensignName}**, your ensign for **${repoName}**. `;
+            if (agentMd) {
+              // Extract a one-liner summary from AGENT.md (first non-empty line after frontmatter)
+              const summary = agentMd
+                .replace(/^---[\s\S]*?---\n/, '')
+                .split('\n')
+                .map(l => l.trim())
+                .filter(l => l && !l.startsWith('#'))
+                .slice(0, 3)
+                .join(' ')
+                .slice(0, 300);
+              lines += `${summary}\n\n`;
+            } else {
+              lines += 'I help maintain and monitor this repository.\n\n';
+            }
+
+            lines += [
+              '### 📋 Available Commands',
+              '',
+              '| Command | Description |',
+              '|---------|-------------|',
+              '| `/ensign help` | Show this help message |',
+              '| `/ensign status` | Latest commit, open issues, CI status |',
+              '| `/ensign journal` | Recent entries from `memory/JOURNAL.md` |',
+              '| `/ensign connect <repo>` | Open a link to another fleet repo\'s AGENT.md |',
+              '',
+              'To summon me, comment any of the above in any issue or PR!',
+            ].join('\n');
+
+            return lines;
+          }
+
+          async function cmdJournal() {
+            let lines = greeting();
+            if (!journalMd) {
+              lines += '📭 No `memory/JOURNAL.md` found in this repository.';
+              return lines;
+            }
+            // Show last ~20 lines
+            const entries = journalMd.split('\n').slice(-20).join('\n');
+            lines += '**📖 Recent journal entries:**\n\n';
+            lines += '```\n' + entries + '\n```\n';
+            lines += '\n_End of journal excerpt._';
+            return lines;
+          }
+
+          async function cmdConnect(targetRepo) {
+            let lines = greeting();
+            if (!targetRepo) {
+              lines += 'Please specify a repo name, e.g. `/ensign connect tminus-dispatcher`.\n\n';
+              lines += 'Available fleet repos:\n';
+              const fleet = [
+                'tminus-dispatcher', 'tminus-client', 'composite-headspace',
+                'symphony-runtime', 'i2i-bottle-agent', 'fleet-bridge',
+                'constraint-tminus-bridge', 'symphony-orchestrator',
+              ];
+              for (const f of fleet) {
+                lines += `- [${f}](https://github.com/SuperInstance/${f}/blob/main/AGENT.md)\n`;
+              }
+              return lines;
+            }
+
+            const safeName = targetRepo.replace(/[^a-zA-Z0-9_-]/g, '');
+            lines += `Here is a link to the **${safeName}** ensign:\n`;
+            lines += `→ [AGENT.md — ${safeName}](https://github.com/SuperInstance/${safeName}/blob/main/AGENT.md)\n\n`;
+            lines += `_(the /ensign action must be deployed in that repo too to respond there)_`;
+            return lines;
+          }
+
+          // ── Route ────────────────────────────────────────────────────────
+
+          let response;
+          switch (cmd) {
+            case 'status':
+              response = await cmdStatus();
+              break;
+            case 'help':
+            case '':
+              response = await cmdHelp();
+              break;
+            case 'journal':
+              response = await cmdJournal();
+              break;
+            case 'connect':
+              response = await cmdConnect(arg);
+              break;
+            default:
+              response = greeting() +
+                `Hmm, I don't recognize the command \`/ensign ${cmd}\`. ` +
+                `Try \`/ensign help\` to see what I can do! 🤔`;
+          }
+
+          await postComment(response);
+          console.log('✅ Ensign response posted.');
