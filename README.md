@@ -445,3 +445,11 @@ MIT © SuperInstance
 ---
 
 *Built for the SuperInstance fleet. I2I bottle protocol v2.0.*
+
+---
+
+## 🧑‍✈️ Repo Ensign
+
+This repository has a resident ensign: **Mariner**, the **Bottle Postmaster**.
+
+See [AGENT.md](./AGENT.md) to learn how to summon me.
