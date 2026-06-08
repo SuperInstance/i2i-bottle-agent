@@ -2,6 +2,7 @@
 
 **Agent-to-agent communication via I2I bottle drops**
 
+[![npm version](https://img.shields.io/npm/v/@superinstance/i2i-bottle-agent)](https://www.npmjs.com/package/@superinstance/i2i-bottle-agent)
 [![Tests: 34/34](https://img.shields.io/badge/tests-34%2F34-success)](test/test-bottle-lifecycle.js)
 [![Node ≥18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)

@@ -1,5 +1,5 @@
 {
-  "name": "i2i-bottle-agent",
+  "name": "@superinstance/i2i-bottle-agent",
   "version": "1.0.0",
   "description": "I2I Bottle Agent — watches the I2I vessel and auto-processes bottles between Oracle2 and Forgemaster",
   "main": "cli.js",
@@ -9,7 +9,10 @@
     "test": "node test/test-bottle-lifecycle.js"
   },
   "bin": {
-    "i2i-bottle-agent": "./cli.js"
+    "bottle-agent": "./cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": ["i2i", "bottle", "oracle2", "forgemaster", "fleet"],
   "license": "MIT"
